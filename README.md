@@ -37,8 +37,8 @@ En una EC2 Amazon Linux 2023 (2 GiB de RAM o más):
 
 ```bash
 sudo dnf install -y git
-git clone https://github.com/TU_ORGANIZACION/TU_REPOSITORIO.git
-cd TU_REPOSITORIO
+git clone https://github.com/lvaldivia/SD-G27-Arqui.git
+cd SD-G27-Arqui
 cp .env.example .env && chmod 600 .env && nano .env
 bash scripts/deploy-backend.sh
 ```
