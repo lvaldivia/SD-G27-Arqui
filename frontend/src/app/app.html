@@ -1,0 +1,74 @@
+<main class="max-w-7xl mx-auto px-4 py-6 sm:px-8 sm:py-10">
+  <header class="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between mb-10">
+    <div><p class="text-primary text-xs font-bold tracking-widest uppercase mb-2">Aula AWS · Arquitectura de Soluciones</p>
+      <h1 class="text-3xl sm:text-4xl font-bold tracking-tight">Inventario de productos</h1>
+      <p class="text-base-content/65 mt-2">Una aplicación. Tres formas de guardar tus datos.</p>
+    </div>
+    <div class="flex items-start gap-3">
+      <div class="rounded-2xl px-4 py-3 text-sm" [class]="'rounded-2xl px-4 py-3 text-sm motor-' + (info()?.motor || 'desconocido')" aria-live="polite">
+        <strong class="uppercase tracking-wide">{{ info()?.motor || 'Sin conexión' }}</strong>
+        <p class="text-xs mt-1 break-all">Servidor: {{ info()?.servidor || 'No disponible' }}</p>
+        @if (info()?.instance_id) { <p class="text-xs mt-1">{{ info()?.instance_id }}</p> }
+        @if (info()?.zona_disponibilidad) { <p class="text-xs">{{ info()?.zona_disponibilidad }}</p> }
+        @if (info() && !info()?.base_datos_disponible) { <p class="font-bold mt-1">Base de datos no disponible</p> }
+      </div>
+      <label class="flex flex-col items-center gap-2 text-xs pt-2"><input type="checkbox" class="toggle toggle-sm" [checked]="oscuro()" (change)="cambiarTema()" aria-label="Activar tema oscuro">Tema oscuro</label>
+    </div>
+  </header>
+
+  <section class="grid gap-4 md:grid-cols-3 mb-8" aria-label="Resumen del inventario">
+    <article class="card bg-base-100 tarjeta"><div class="card-body gap-2"><p class="text-sm text-base-content/65">Total de productos</p><p class="text-3xl font-bold">{{ productos().length | number }}</p><p class="text-xs text-base-content/60">Referencias en el inventario</p></div></article>
+    <article class="card bg-base-100 tarjeta"><div class="card-body gap-2"><p class="text-sm text-base-content/65">Unidades en stock</p><p class="text-3xl font-bold">{{ unidades() | number }}</p><p class="text-xs text-base-content/60">Unidades disponibles</p></div></article>
+    <article class="card bg-base-100 tarjeta"><div class="card-body gap-2"><p class="text-sm text-base-content/65">Valor del inventario</p><p class="text-3xl font-bold text-primary">{{ valor() | currency:'USD':'symbol':'1.2-2':'es' }}</p><p class="text-xs text-base-content/60">Precio × stock · USD</p></div></article>
+  </section>
+
+  <section class="card bg-base-100 tarjeta overflow-hidden" aria-labelledby="titulo-productos" [attr.aria-busy]="cargando()">
+    <div class="p-5 sm:p-6 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
+      <div><h2 id="titulo-productos" class="text-lg font-bold">Tus productos</h2><p class="text-sm text-base-content/65">Consulta y administra el catálogo.</p></div>
+      <div class="flex gap-2"><button class="btn btn-ghost" (click)="cargar()" [disabled]="cargando() || guardando()">Actualizar</button><button class="btn btn-primary" (click)="abrir(null, formulario)" [disabled]="guardando() || cargando()">+ Nuevo producto</button></div>
+    </div>
+    <div class="px-5 sm:px-6 pb-5"><label for="busqueda" class="sr-only">Buscar productos por nombre</label><input id="busqueda" type="search" class="input w-full sm:max-w-sm" placeholder="Buscar por nombre…" [ngModel]="busqueda()" (ngModelChange)="busqueda.set($event)"></div>
+    @if (falloCarga()) { <div class="alert alert-warning mx-5 mb-4" role="alert">No se pudo actualizar el catálogo. Los datos visibles pueden estar desactualizados.</div> }
+    <div class="overflow-x-auto">
+      <table class="table"><caption class="sr-only">Productos del inventario en dólares estadounidenses</caption>
+        <thead><tr><th scope="col">Producto</th><th scope="col">Precio</th><th scope="col">Stock</th><th scope="col">Creado</th><th scope="col" class="text-right">Acciones</th></tr></thead>
+        <tbody>
+          @if (cargando()) {
+            @for (fila of [1,2,3,4]; track fila) { <tr aria-hidden="true">@for (columna of [1,2,3,4,5]; track columna) { <td><div class="skeleton h-5 w-full min-w-16"></div></td> }</tr> }
+          } @else {
+            @for (producto of filtrados(); track producto.id) {
+              <tr><td><span class="font-semibold">{{ producto.nombre }}</span><span class="block text-xs text-base-content/50 max-w-44 truncate" [title]="producto.id">{{ producto.id }}</span></td>
+                <td class="whitespace-nowrap">{{ producto.precio | currency:'USD':'symbol':'1.2-2':'es' }}</td>
+                <td><span class="badge" [class.badge-warning]="producto.stock === 0" [class.badge-ghost]="producto.stock > 0">{{ producto.stock }}</span></td>
+                <td class="whitespace-nowrap text-base-content/65">{{ producto.creado_en | date:'dd/MM/yyyy HH:mm' }}</td>
+                <td><div class="flex justify-end gap-1"><button class="btn btn-ghost btn-sm" [attr.aria-label]="'Editar ' + producto.nombre" (click)="abrir(producto, formulario)" [disabled]="guardando()">Editar</button><button class="btn btn-ghost btn-sm text-error" [attr.aria-label]="'Eliminar ' + producto.nombre" (click)="pedirEliminar(producto)" [disabled]="guardando()">Eliminar</button></div></td>
+              </tr>
+            } @empty { <tr><td colspan="5" class="text-center py-16"><p class="text-lg font-semibold">{{ busqueda() ? 'No encontramos coincidencias' : 'Tu inventario está vacío' }}</p><p class="text-base-content/60 mt-2">{{ busqueda() ? 'Prueba con otro nombre.' : 'Crea tu primer producto para comenzar.' }}</p></td></tr> }
+          }
+        </tbody>
+      </table>
+    </div>
+    <div class="px-6 py-4 border-t border-base-200 text-xs text-base-content/60">{{ filtrados().length }} de {{ productos().length }} productos · Precios en USD</div>
+  </section>
+  <footer class="mt-6 text-xs text-base-content/50">Laboratorio educativo · RDS MySQL → Aurora → DynamoDB</footer>
+</main>
+
+<dialog #editor class="modal" aria-labelledby="titulo-editor" (cancel)="guardando() && $event.preventDefault()">
+  <div class="modal-box"><h2 id="titulo-editor" class="text-xl font-bold mb-1">{{ seleccion ? 'Editar producto' : 'Nuevo producto' }}</h2><p class="text-sm text-base-content/60 mb-5">Completa los datos del producto. Todos los campos son obligatorios.</p>
+    <form #formulario="ngForm" (ngSubmit)="guardar(formulario)" novalidate>
+      <fieldset [disabled]="guardando()" class="space-y-4">
+        <div><label class="label" for="nombre">Nombre</label><input id="nombre" autofocus name="nombre" class="input w-full" [(ngModel)]="datos.nombre" required maxlength="120" #nombre="ngModel" aria-describedby="error-nombre">
+          @if ((nombre.touched || formulario.submitted) && (!datos.nombre.trim() || nombre.invalid)) { <p id="error-nombre" class="text-error text-sm mt-1">Escribe un nombre de 1 a 120 caracteres.</p> }</div>
+        <div><label class="label" for="precio">Precio (USD)</label><input id="precio" name="precio" class="input w-full" type="number" [(ngModel)]="datos.precio" required min="0" max="9999999999.99" step="0.01" #precio="ngModel" aria-describedby="error-precio">
+          @if ((precio.touched || formulario.submitted) && !precioValido()) { <p id="error-precio" class="text-error text-sm mt-1">Usa un precio entre 0 y 9.999.999.999,99, con hasta dos decimales.</p> }</div>
+        <div><label class="label" for="stock">Unidades en stock</label><input id="stock" name="stock" class="input w-full" type="number" [(ngModel)]="datos.stock" required min="0" max="2147483647" step="1" #stock="ngModel" aria-describedby="error-stock">
+          @if ((stock.touched || formulario.submitted) && !stockValido()) { <p id="error-stock" class="text-error text-sm mt-1">Usa un entero entre 0 y 2.147.483.647.</p> }</div>
+      </fieldset>
+      <div class="modal-action"><button type="button" class="btn btn-ghost" (click)="cerrarEditor()" [disabled]="guardando()">Cancelar</button><button type="submit" class="btn btn-primary" [disabled]="guardando()">{{ guardando() ? 'Guardando…' : 'Guardar producto' }}</button></div>
+    </form>
+  </div>
+</dialog>
+<dialog #confirmacion class="modal" aria-labelledby="titulo-eliminar" (cancel)="guardando() && $event.preventDefault()">
+  <div class="modal-box"><h2 id="titulo-eliminar" class="text-xl font-bold">Eliminar producto</h2><p class="mt-3">¿Deseas eliminar «{{ pendiente?.nombre }}»? Esta acción es permanente.</p><div class="modal-action"><button class="btn btn-ghost" (click)="confirmacion.close()" [disabled]="guardando()">Cancelar</button><button class="btn btn-error" (click)="eliminar()" [disabled]="guardando()">{{ guardando() ? 'Eliminando…' : 'Eliminar' }}</button></div></div>
+</dialog>
+@if (aviso(); as mensaje) { <div class="toast toast-end z-50 max-w-[min(100vw,28rem)]" aria-live="polite"><div class="alert" [class.alert-error]="mensaje.error" [class.alert-success]="!mensaje.error"><span>{{ mensaje.texto }}</span><button class="btn btn-ghost btn-xs" aria-label="Cerrar aviso" (click)="aviso.set(null)">✕</button></div></div> }

@@ -1,0 +1,22 @@
+.env
+.env.*
+!.env.example
+**/__pycache__/
+.pytest_cache/
+.venv/
+.npm-cache/
+**/node_modules/
+**/dist/
+**/.angular/
+*.log
+# Ignorar archivos PEM que puedan contener claves privadas.
+*.pem
+# Incluir este paquete de certificados públicos de AWS (el signo ! es una excepción).
+!backend/app/rds-global-bundle.pem
+*.key
+.coverage
+.verificacion-python/
+.buildx/
+# Notas de trabajo locales.
+prompt.md
+VERIFICACION.md
