@@ -64,7 +64,6 @@ def crear_app(repositorio=None, configuracion=None):
         logger.error("Fallo al atender la API: %s", type(error).__name__)
         return JSONResponse(status_code=503, content={"detalle": "No se pudo acceder a la base de datos. Intente nuevamente."})
 
-    @app.get("/health", response_class=PlainTextResponse, include_in_schema=False)
     @app.get("/api/health", response_class=PlainTextResponse, summary="Comprobar el proceso sin consultar datos")
     def health():
         return "OK"

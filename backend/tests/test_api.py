@@ -84,7 +84,7 @@ def test_health_no_consulta_datos(cliente):
     def fallar():
         raise RuntimeError("Base de datos caída")
     cliente.app.state.repositorio.disponible = fallar
-    assert cliente.get("/health").text == "OK"
+    assert cliente.get("/health").status_code == 404
     assert cliente.get("/api/health").text == "OK"
     info = cliente.get("/api/info").json()
     assert info["base_datos_disponible"] is False

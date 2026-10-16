@@ -41,12 +41,12 @@ echo "DynamoDB: se comprobará la tabla que debe crear previamente en la consola
 "${ADMIN[@]}" docker run -d --name "$CONTENEDOR" --restart unless-stopped \
   --env-file "$RAIZ/.env" -p 8000:8000 \
   --log-opt max-size=10m --log-opt max-file=3 "$IMAGEN" >/dev/null
-echo "Esperando la respuesta de /health..."
+echo "Esperando la respuesta de /api/health..."
 for (( intento=1; intento<=60; intento++ )); do
   if "${ADMIN[@]}" docker exec "$CONTENEDOR" python -c \
-    "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read() == b'OK'" \
+    "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2).read() == b'OK'" \
     >/dev/null 2>&1; then
-    echo "Inicialización de datos completada. Backend listo: /health responde OK en el puerto 8000."
+    echo "Inicialización de datos completada. Backend listo: /api/health responde OK en el puerto 8000."
     exit 0
   fi
   sleep 2
