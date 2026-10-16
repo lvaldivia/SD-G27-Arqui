@@ -248,6 +248,50 @@ DB_PASSWORD=TU_CONTRASENA
 
 Usar el endpoint real: el backend valida el certificado TLS de RDS con ese nombre.
 
+#### Probar la conexión desde la instancia
+
+Cuando exista la EC2 ([paso 5](#5-ec2-base)), se puede comprobar que llega a RDS con el cliente `mysql`. Amazon Linux 2023 no lo trae instalado; el paquete `mariadb105` incluye los comandos `mysql` y `mysqldump`:
+
+```bash
+sudo dnf install -y mariadb105
+mysql --version
+
+mysql -h rds-curso-productos.xxxxxxxx.us-east-1.rds.amazonaws.com -u administrador -p
+```
+
+Pide la contraseña. Dentro del cliente:
+
+```sql
+SELECT VERSION();
+SHOW DATABASES;              -- curso_productos aparece después del primer arranque del backend
+USE curso_productos;
+SHOW TABLES;
+SELECT * FROM productos;
+EXIT;
+```
+
+Comprobación en una sola línea, útil para scripts:
+
+```bash
+mysql -h ENDPOINT_RDS -u administrador -p -e "SELECT 1;"
+```
+
+Alternativa sin instalar paquetes, con el cliente oficial de MySQL en Docker:
+
+```bash
+sudo docker run -it --rm mysql:8.4 mysql -h ENDPOINT_RDS -u administrador -p
+```
+
+| Resultado | Significado |
+| --- | --- |
+| Entra al prompt `MySQL [(none)]>` | Red, grupo de seguridad y credenciales correctos |
+| Se queda colgado y termina en *Can't connect ... (110)* | La red no llega: `rds-sg` sin entrada 3306 desde `backend-sg`, o la instancia no tiene `backend-sg` |
+| *Unknown MySQL server host* | Endpoint mal copiado |
+| *Access denied for user* | Llega a RDS; usuario o contraseña incorrectos |
+| *Authentication plugin 'caching_sha2_password' cannot be loaded* | Cliente MariaDB antiguo frente a MySQL 8.4: usar la alternativa con Docker |
+
+Lo mismo sirve para Aurora: usar el endpoint **Writer** del clúster (o el **Reader** para comprobar el lector).
+
 ### 4. Tabla DynamoDB (opcional)
 
 Solo para la fase DynamoDB. Ver [Fase 3: DynamoDB](#fase-3-dynamodb).
