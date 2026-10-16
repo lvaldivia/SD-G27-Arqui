@@ -250,23 +250,7 @@ Usar el endpoint real: el backend valida el certificado TLS de RDS con ese nombr
 
 ### 4. Tabla DynamoDB (opcional)
 
-Solo para la fase DynamoDB. DynamoDB → Tables → Create table:
-
-- Nombre: `productos`.
-- Partition key: **`id`**, tipo **String**. Sin sort key.
-- Capacidad: **On-demand**.
-
-En el `.env`:
-
-```dotenv
-DB_ENGINE=dynamodb
-AWS_REGION=us-east-1
-DYNAMO_TABLE=productos
-DYNAMO_AUTO_CREATE=false
-DYNAMO_ENDPOINT=
-```
-
-No poner `AWS_ACCESS_KEY_ID` ni `AWS_SECRET_ACCESS_KEY`: boto3 usa las credenciales del rol `backend-rol`.
+Solo para la fase DynamoDB. Ver [Fase 3: DynamoDB](#fase-3-dynamodb).
 
 ### 5. EC2 base
 
@@ -556,6 +540,186 @@ Las instancias del Auto Scaling Group no ven los cambios hechos en `backend-base
 3. `backend-lt` → Actions → **Modify template (Create new version)** con la nueva AMI.
 4. `backend-asg` → Instance refresh → **Start instance refresh**.
 
+## Cambiar de motor de datos
+
+El mismo código funciona con los tres motores; solo cambia el `.env`. El frontend no se recompila.
+
+| Fase | Motor | `DB_ENGINE` |
+| --- | --- | --- |
+| 1 | RDS MySQL ([paso 3](#3-rds-mysql)) | `mysql` |
+| 2 | Aurora MySQL | `aurora` |
+| 3 | DynamoDB | `dynamodb` |
+
+Cada cambio del `.env` se aplica en `backend-base` con `bash scripts/deploy-backend.sh --solo-reiniciar` y llega al Auto Scaling Group con una AMI nueva ([Actualizar backend o `.env`](#actualizar-backend-o-env)).
+
+### Fase 2: migrar de RDS MySQL a Aurora MySQL
+
+Hay dos formas de crear el clúster Aurora con los productos que ya existen en RDS. En ambas el clúster queda en la VPC default, sin acceso público y con `rds-sg`, así que `backend-sg` llega igual que a RDS.
+
+#### Opción A: migrar un snapshot (consola)
+
+1. RDS → Databases → `rds-curso-productos` → **Actions → Take snapshot**. Nombre: `rds-curso-productos-migracion`. Esperar el estado **Available** (RDS → Snapshots).
+2. Seleccionar el snapshot → **Actions → Migrate snapshot**:
+
+| Campo | Valor |
+| --- | --- |
+| Migrate to DB engine | **aurora-mysql** |
+| DB engine version | La versión de Aurora compatible que ofrezca la consola |
+| DB instance identifier | `aurora-curso-productos` |
+| DB instance class | `db.t4g.medium` (la más pequeña de Aurora aprovisionado) |
+| VPC | Default VPC |
+| DB subnet group | `default` |
+| Public access | **No** |
+| VPC security group | **`rds-sg`** (quitar `default`) |
+
+3. Esperar a que el clúster y su instancia estén **Available**. El clúster tiene un **escritor** con los mismos datos, usuario y contraseña que RDS.
+4. (Opcional, para mostrar lecturas distribuidas) Clúster → **Actions → Add reader**, con `rds-sg`.
+
+Si **Migrate snapshot** no aparece o no ofrece una versión de Aurora para la versión de MySQL del RDS, usar la opción B.
+
+#### Opción B: copiar con `mysqldump` desde la instancia
+
+Funciona entre cualquier versión. Primero crear un clúster vacío: RDS → Create database:
+
+| Campo | Valor |
+| --- | --- |
+| Engine | **Aurora (MySQL Compatible)** |
+| Templates | Dev/Test |
+| DB cluster identifier | `aurora-curso-productos` |
+| Master username | `administrador` |
+| Credentials management | Self managed |
+| Cluster storage configuration | Aurora Standard |
+| Instance class | `db.t4g.medium` |
+| Availability & durability | **Create an Aurora Replica** en otra zona (opcional; para tener lector) |
+| VPC | Default VPC |
+| DB subnet group | `default` |
+| Public access | **No** |
+| VPC security group | **`rds-sg`** (quitar `default`) |
+
+Cuando esté **Available**, desde `backend-base` por Session Manager copiar los datos. Se usa el cliente `mysql` de la imagen oficial de Docker, sin instalar nada:
+
+```bash
+RDS=rds-curso-productos.xxxxxxxx.us-east-1.rds.amazonaws.com
+AURORA=aurora-curso-productos.cluster-xxxxxxxx.us-east-1.rds.amazonaws.com
+read -s -p "Contraseña RDS: " RDS_PASS; echo
+read -s -p "Contraseña Aurora: " AURORA_PASS; echo
+
+# 1. Exportar la base curso_productos de RDS (incluye CREATE DATABASE y la tabla)
+sudo docker run --rm -e MYSQL_PWD="$RDS_PASS" mysql:8.4 \
+  mysqldump -h "$RDS" -u administrador --single-transaction --set-gtid-purged=OFF \
+  --no-tablespaces --databases curso_productos > ~/curso_productos.sql
+grep -c "INSERT INTO" ~/curso_productos.sql
+
+# 2. Importar en el escritor de Aurora
+sudo docker run --rm -i -e MYSQL_PWD="$AURORA_PASS" mysql:8.4 \
+  mysql -h "$AURORA" -u administrador < ~/curso_productos.sql
+
+# 3. Comprobar
+sudo docker run --rm -e MYSQL_PWD="$AURORA_PASS" mysql:8.4 \
+  mysql -h "$AURORA" -u administrador -e "SELECT COUNT(*) FROM curso_productos.productos;"
+
+rm ~/curso_productos.sql
+```
+
+Los productos creados en RDS después del `mysqldump` no se copian: hacer la copia justo antes de cambiar el `.env`.
+
+#### Apuntar el backend a Aurora
+
+En el clúster → **Connectivity & security** hay dos endpoints:
+
+- **Writer** (`...cluster-xxxx...`): escrituras y creación de tablas. Va en `DB_HOST`.
+- **Reader** (`...cluster-ro-xxxx...`): lecturas. Va en `DB_READ_HOST` (opcional; vacío = leer también del escritor).
+
+```dotenv
+DB_ENGINE=aurora
+DB_HOST=aurora-curso-productos.cluster-xxxxxxxx.us-east-1.rds.amazonaws.com
+DB_READ_HOST=aurora-curso-productos.cluster-ro-xxxxxxxx.us-east-1.rds.amazonaws.com
+DB_PORT=3306
+DB_NAME=curso_productos
+DB_USER=administrador
+DB_PASSWORD=CONTRASENA_AURORA
+```
+
+```bash
+bash scripts/deploy-backend.sh --solo-reiniciar
+curl -s http://localhost:8000/api/info    # "motor": "aurora", "base_datos_disponible": true
+curl -s http://localhost:8000/api/productos
+```
+
+- No poner el endpoint de lectura en `DB_HOST`: el arranque crea la base y la tabla en el escritor.
+- Los `GET` de productos usan el lector; una réplica puede ir unos milisegundos atrasada respecto al escritor.
+- Cuando Aurora funcione, se puede borrar `rds-curso-productos` (y su snapshot) para no pagar ambos.
+
+Después: AMI nueva, versión nueva de `backend-lt` e instance refresh ([Actualizar](#actualizar-backend-o-env)).
+
+### Fase 3: DynamoDB
+
+DynamoDB no es SQL: los productos de MySQL/Aurora **no se migran**; la fase empieza con la tabla vacía.
+
+#### Crear la tabla (consola)
+
+DynamoDB → Tables → **Create table**, en us-east-1:
+
+| Campo | Valor |
+| --- | --- |
+| Table name | **`productos`** (igual que `DYNAMO_TABLE`) |
+| Partition key | **`id`**, tipo **String** |
+| Sort key | Ninguna |
+| Table settings | Customize settings |
+| Table class | DynamoDB Standard |
+| Capacity mode | **On-demand** |
+| Índices secundarios | Ninguno |
+| Cifrado | Owned by Amazon DynamoDB |
+
+**Create table** y esperar el estado **Active**.
+
+#### Crear la tabla (AWS CLI)
+
+Equivalente, desde una PC con un perfil con permisos de administrador (el rol `backend-rol` no tiene `CreateTable` a propósito):
+
+```bash
+aws dynamodb create-table \
+  --table-name productos \
+  --attribute-definitions AttributeName=id,AttributeType=S \
+  --key-schema AttributeName=id,KeyType=HASH \
+  --billing-mode PAY_PER_REQUEST \
+  --region us-east-1
+
+aws dynamodb wait table-exists --table-name productos --region us-east-1
+aws dynamodb describe-table --table-name productos --region us-east-1 \
+  --query "Table.{estado:TableStatus,clave:KeySchema}"
+```
+
+El nombre del atributo (`id`) y su tipo (`S`, String) deben ser exactamente esos: el backend guarda el UUID del producto en `id`. `nombre`, `precio`, `stock` y `creado_en` no se declaran; DynamoDB los acepta en cada ítem.
+
+#### Permisos y `.env`
+
+El rol `backend-rol` ya tiene la política `DynamoCrudProductos` del [paso 2](#2-rol-iam-de-las-ec2), limitada a `table/productos`. Comprobar desde la instancia:
+
+```bash
+aws dynamodb describe-table --table-name productos --region us-east-1 --query Table.TableStatus
+```
+
+```dotenv
+DB_ENGINE=dynamodb
+AWS_REGION=us-east-1
+DYNAMO_TABLE=productos
+DYNAMO_AUTO_CREATE=false
+DYNAMO_ENDPOINT=
+```
+
+- No poner `AWS_ACCESS_KEY_ID` ni `AWS_SECRET_ACCESS_KEY`: boto3 usa las credenciales del rol (requiere hop limit 2).
+- `DB_HOST`, `DB_USER`, `DB_PASSWORD` y demás variables SQL se ignoran con este motor.
+
+```bash
+bash scripts/deploy-backend.sh --solo-reiniciar
+curl -s http://localhost:8000/api/info    # "motor": "dynamodb", "base_datos_disponible": true
+```
+
+Los productos creados desde la app aparecen en DynamoDB → Tables → `productos` → **Explore table items**.
+
+Después: AMI nueva, versión nueva de `backend-lt` e instance refresh ([Actualizar](#actualizar-backend-o-env)).
+
 ## Limpieza
 
-Eliminar, en este orden: CloudFront (deshabilitar y borrar), bucket S3 (vaciar y borrar), `backend-asg`, `backend-alb`, `backend-tg`, `backend-lt`, AMIs y sus snapshots, `backend-base`, RDS, tabla DynamoDB, `backend-rol` y los grupos de seguridad `rds-sg`, `backend-sg` y `alb-sg`.
+Eliminar, en este orden: CloudFront (deshabilitar y borrar), bucket S3 (vaciar y borrar), `backend-asg`, `backend-alb`, `backend-tg`, `backend-lt`, AMIs y sus snapshots, `backend-base`, RDS, clúster Aurora y snapshots de migración, tabla DynamoDB, `backend-rol` y los grupos de seguridad `rds-sg`, `backend-sg` y `alb-sg`.
